@@ -1,5 +1,5 @@
 CUSTOM SOFTWARE LICENSE
-Software name: [YOUR PROJECT NAME] Copyright (c) [YEAR] [YOUR NAME / COMPANY]
+Software name: The Chat Copyright (c) 2026 Andrew Diers
 
 DEFINITIONS "The Software" means the software identified above, including its source code, object code, documentation, and any modified versions of it.
 
@@ -33,11 +33,4 @@ UPDATES The Licensor may issue updated versions of this License for future relea
 
 GOVERNING LAW This License is governed by the laws of [YOUR COUNTRY / STATE], excluding its conflict-of-law rules.
 
-Contact for permission requests: Name: [YOUR NAME] Email: [YOUR EMAIL] Website: [OPTIONAL]
-
-===================================================================== HOW TO USE THIS LICENSE (delete this section before publishing)
-
-Fill in every bracketed [PLACEHOLDER].
-Save it as a file named LICENSE (or LICENSE.txt) in the root of your repository. Without this file, the default is "all rights reserved" anyway, but stating terms explicitly avoids confusion.
-When you grant someone permission, put it in writing (email is fine) and say what they may do, for how long, and any fee. Point them to this license.
-This template is a starting point, not legal advice. If your software is commercially significant, or if you plan to sell licenses at scale, have a lawyer review it for your jurisdiction. =====================================================================
+Contact for permission requests: Name: Andrew Diers Email: andrewpdiers@gmail.com 
