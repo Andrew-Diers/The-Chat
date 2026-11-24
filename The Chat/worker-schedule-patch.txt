@@ -19,7 +19,7 @@
 //   Rotate any credentials previously embedded in source or shared publicly.
 //
 // Configure these bindings and secrets in the Worker environment before deploying.
-
+js```
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -918,19 +918,6 @@ export default {
         }
       }
 
-      // Ignore exact repeat messages from the same sender and room within one second.
-      // This also protects users whose client does not implement local deduplication.
-      const duplicateSince = new Date(Date.now() - 1000).toISOString();
-      const recentDuplicate = await db.prepare(
-        `SELECT time FROM messages
-         WHERE chat = ? AND username = ? AND message = ? AND time >= ?
-         ORDER BY time DESC LIMIT 1`
-      ).bind(chatName, username, message, duplicateSince).first();
-
-      if (recentDuplicate) {
-        return json({ ok: true, duplicate: true });
-      }
-
       const time = new Date().toISOString();
 
       await db.prepare(
@@ -1068,3 +1055,4 @@ export default {
     return text("Not found", 404);
   }
 };
+
