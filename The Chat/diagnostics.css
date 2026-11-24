@@ -1,0 +1,177 @@
+.diagnostics-modal[hidden] {
+  display: none !important;
+}
+
+.diagnostics-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: var(--color-overlay);
+}
+
+.diagnostics-panel {
+  width: min(760px, 100%);
+  max-height: min(82vh, 760px);
+  display: flex;
+  flex-direction: column;
+  padding: 24px;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: 0 24px 70px var(--color-shadow);
+  font-family: var(--font-body);
+}
+
+.diagnostics-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.diagnostics-heading h2 {
+  margin: 0;
+  color: var(--color-text);
+  font-family: var(--font-heading);
+}
+
+.diagnostics-eyebrow {
+  margin: 0 0 6px;
+  color: var(--color-primary);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+}
+
+.diagnostics-description {
+  margin: 12px 0;
+  color: var(--color-muted);
+  line-height: 1.5;
+}
+
+.diagnostics-close {
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  margin: 0;
+  padding: 0;
+  color: var(--color-text);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#diagnostics-status {
+  margin: 0 0 10px;
+  color: var(--color-muted);
+  font-size: 0.9rem;
+}
+
+.diagnostics-entries {
+  min-height: 150px;
+  max-height: 48vh;
+  overflow: auto;
+  padding: 10px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.diagnostics-entry {
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  color: var(--color-text);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-left: 4px solid var(--color-primary);
+  border-radius: var(--radius);
+  overflow-wrap: anywhere;
+}
+
+.diagnostics-entry:last-child {
+  margin-bottom: 0;
+}
+
+.diagnostics-entry[data-level="error"] {
+  border-left-color: var(--color-danger);
+}
+
+.diagnostics-entry[data-level="warning"] {
+  border-left-color: var(--color-accent);
+}
+
+.diagnostics-entry-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px 12px;
+  margin-bottom: 5px;
+  color: var(--color-muted);
+  font-size: 0.75rem;
+}
+
+.diagnostics-entry-message {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.diagnostics-empty {
+  margin: 0;
+  padding: 18px 8px;
+  color: var(--color-muted);
+  text-align: center;
+}
+
+.diagnostics-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.diagnostics-actions button {
+  width: auto;
+  min-height: 40px;
+  margin: 0;
+  padding: 9px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.diagnostics-clear {
+  color: var(--color-text);
+  background: var(--color-surface-raised);
+}
+
+.diagnostics-done {
+  color: var(--color-primary-contrast);
+  background: var(--color-primary);
+}
+
+@media (max-width: 560px) {
+  .diagnostics-modal {
+    padding: 12px;
+  }
+
+  .diagnostics-panel {
+    max-height: 90vh;
+    padding: 18px;
+  }
+
+  .diagnostics-entries {
+    max-height: 52vh;
+  }
+}

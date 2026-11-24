@@ -1,0 +1,1070 @@
+// Cloudflare Worker backend for The Chat
+//
+// Required bindings:
+//   DB: D1 database with the tables used by this app, including:
+//       settings (key TEXT PRIMARY KEY, value TEXT)
+//       chats (name TEXT PRIMARY KEY, status TEXT)
+//       accounts (username TEXT PRIMARY KEY, password TEXT)
+//       login_history (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, event TEXT, time TEXT)
+//       reports (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, message TEXT, chat TEXT, time TEXT)
+//       online (username TEXT PRIMARY KEY, last_seen INTEGER)
+//       moderation (username TEXT PRIMARY KEY, muted INTEGER DEFAULT 0, blinded INTEGER DEFAULT 0)
+//       messages (id INTEGER PRIMARY KEY AUTOINCREMENT, chat TEXT, username TEXT, message TEXT, time TEXT)
+//       notifications (id TEXT PRIMARY KEY, title TEXT, message TEXT, created_at TEXT, author TEXT)
+//   AI: optional Workers AI binding for the aibot: command.
+//
+    // Required Worker secrets / variables:
+//   ADMIN_PASSWORD: set as a Worker secret; never commit it to source control.
+//   ABLY_REST_KEY: set as a Worker secret if realtime message publishing is needed.
+//   Rotate any credentials previously embedded in source or shared publicly.
+//
+// Configure these bindings and secrets in the Worker environment before deploying.
+
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    const method = request.method;
+    const db = env.DB;
+
+    const CORS = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, X-Admin-Password"
+    };
+
+    const json = (data, status = 200) =>
+      new Response(JSON.stringify(data), {
+        status,
+        headers: {
+          ...CORS,
+          "Content-Type": "application/json"
+        }
+      });
+
+    const text = (message, status = 200) =>
+      new Response(message, {
+        status,
+        headers: {
+          ...CORS,
+          "Content-Type": "text/plain; charset=utf-8"
+        }
+      });
+
+    if (method === "OPTIONS") {
+      return new Response(null, { headers: CORS });
+    }
+
+    if (!db) {
+      return json({
+        ok: false,
+        error: "Missing D1 binding named DB."
+      }, 500);
+    }
+
+    // Configure both values as Worker secrets. Never hard-code credentials.
+    const ADMIN_PASSWORD = env.ADMIN_PASSWORD || "";
+    const ABLY_REST_KEY = env.ABLY_REST_KEY || "";
+
+    function isAdminRequest() {
+      const suppliedPassword = request.headers.get("X-Admin-Password");
+      return Boolean(ADMIN_PASSWORD && suppliedPassword === ADMIN_PASSWORD);
+    }
+
+    async function recordLoginEvent(username, event) {
+      await db.prepare(
+        "INSERT INTO login_history (username, event, time) VALUES (?, ?, ?)"
+      ).bind(username, event, new Date().toISOString()).run();
+    }
+
+    async function getSetting(key, fallback = null) {
+      const row = await db.prepare(
+        "SELECT value FROM settings WHERE key = ?"
+      ).bind(key).first();
+
+      if (!row && fallback !== null) {
+        await db.prepare(
+          "INSERT INTO settings (key, value) VALUES (?, ?)"
+        ).bind(key, fallback).run();
+
+        return fallback;
+      }
+
+      return row ? row.value : fallback;
+    }
+
+    async function setSetting(key, value) {
+      await db.prepare(
+        `INSERT INTO settings (key, value)
+         VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+      ).bind(key, value).run();
+    }
+
+    const SCHEDULE_DAYS = [
+      "monday", "tuesday", "wednesday", "thursday",
+      "friday", "saturday", "sunday"
+    ];
+
+    function emptyChatSchedule() {
+      return {
+        enabled: false,
+        days: {},
+        timeZone: ""
+      };
+    }
+
+    async function getChatSchedule() {
+      const saved = await getSetting("chat-schedule", null);
+      if (!saved) return emptyChatSchedule();
+
+      try {
+        const schedule = JSON.parse(saved);
+        if (!schedule || typeof schedule !== "object") {
+          return emptyChatSchedule();
+        }
+
+        // Migrate the previous all-days schedule format without disrupting it.
+        let days = schedule.days;
+        if (!days && schedule.enabled === true && schedule.start && schedule.end) {
+          days = Object.fromEntries(SCHEDULE_DAYS.map(day => [day, {
+            enabled: true,
+            start: String(schedule.start),
+            end: String(schedule.end)
+          }]));
+        }
+
+        const normalizedDays = {};
+        if (days && typeof days === "object") {
+          for (const day of SCHEDULE_DAYS) {
+            const entry = days[day];
+            if (!entry || entry.enabled !== true) continue;
+            normalizedDays[day] = {
+              enabled: true,
+              start: String(entry.start || ""),
+              end: String(entry.end || "")
+            };
+          }
+        }
+
+        return {
+          enabled: schedule.enabled === true && Object.keys(normalizedDays).length > 0,
+          days: normalizedDays,
+          timeZone: String(schedule.timeZone || "")
+        };
+      } catch (error) {
+        return emptyChatSchedule();
+      }
+    }
+
+    function minutesFromHHMM(value) {
+      const match = /^(\d{2}):(\d{2})$/.exec(String(value || ""));
+      if (!match) return null;
+
+      const hours = Number(match[1]);
+      const minutes = Number(match[2]);
+      if (hours > 23 || minutes > 59) return null;
+      return hours * 60 + minutes;
+    }
+
+    function getMinutesInTimeZone(timeZone, date = new Date()) {
+      try {
+        const parts = new Intl.DateTimeFormat("en-GB", {
+          timeZone,
+          hour: "2-digit",
+          minute: "2-digit",
+          hourCycle: "h23"
+        }).formatToParts(date);
+        const hours = Number(parts.find(part => part.type === "hour").value);
+        const minutes = Number(parts.find(part => part.type === "minute").value);
+        return hours * 60 + minutes;
+      } catch (error) {
+        return null;
+      }
+    }
+
+    function isChatScheduleActive(schedule, date = new Date()) {
+      if (!schedule || schedule.enabled !== true) return false;
+
+      let parts;
+      try {
+        parts = new Intl.DateTimeFormat("en-US", {
+          timeZone: schedule.timeZone || undefined,
+          weekday: "long",
+          hour: "2-digit",
+          minute: "2-digit",
+          hourCycle: "h23"
+        }).formatToParts(date);
+      } catch (error) {
+        return false;
+      }
+
+      const weekday = parts.find(part => part.type === "weekday")?.value.toLowerCase();
+      const hours = Number(parts.find(part => part.type === "hour")?.value);
+      const minutes = Number(parts.find(part => part.type === "minute")?.value);
+      const now = hours * 60 + minutes;
+      const dayIndex = SCHEDULE_DAYS.indexOf(weekday);
+      if (dayIndex < 0) return false;
+
+      const daySchedule = schedule.days?.[weekday];
+      if (daySchedule?.enabled === true) {
+        const start = minutesFromHHMM(daySchedule.start);
+        const end = minutesFromHHMM(daySchedule.end);
+        if (start !== null && end !== null && start !== end) {
+          const activeToday = start < end
+            ? now >= start && now < end
+            : now >= start;
+          if (activeToday) return true;
+        }
+      }
+
+      // Carry an overnight quiet period into the following weekday.
+      const previousDay = SCHEDULE_DAYS[(dayIndex + SCHEDULE_DAYS.length - 1) % SCHEDULE_DAYS.length];
+      const previous = schedule.days?.[previousDay];
+      if (!previous || previous.enabled !== true) return false;
+      const previousStart = minutesFromHHMM(previous.start);
+      const previousEnd = minutesFromHHMM(previous.end);
+      return previousStart !== null && previousEnd !== null
+        && previousStart > previousEnd
+        && now < previousEnd;
+    }
+
+    async function getActiveChatName() {
+      let name = await getSetting("active-chat", null);
+
+      if (!name) {
+        name = "Main";
+
+        await db.prepare(
+          `INSERT INTO chats (name, status)
+           VALUES (?, 'active')
+           ON CONFLICT(name) DO UPDATE SET status = 'active'`
+        ).bind(name).run();
+
+        await setSetting("active-chat", name);
+      }
+
+      return name;
+    }
+
+    async function setActiveChatName(newName) {
+      await db.prepare(
+        "UPDATE chats SET status = 'closed'"
+      ).run();
+
+      await db.prepare(
+        `INSERT INTO chats (name, status)
+         VALUES (?, 'active')
+         ON CONFLICT(name) DO UPDATE SET status = 'active'`
+      ).bind(newName).run();
+
+      await setSetting("active-chat", newName);
+    }
+
+    async function getChatStatus(name) {
+      const row = await db.prepare(
+        "SELECT status FROM chats WHERE name = ?"
+      ).bind(name).first();
+
+      return row ? row.status : "unknown";
+    }
+
+    async function publishAbly(channelName, eventName, data) {
+      if (!ABLY_REST_KEY) {
+        console.error("ABLY_REST_KEY secret is not configured.");
+        return;
+      }
+
+      const response = await fetch(
+        `https://rest.ably.io/channels/${encodeURIComponent(channelName)}/messages`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Basic " + btoa(ABLY_REST_KEY)
+          },
+          body: JSON.stringify({
+            name: eventName,
+            data
+          })
+        }
+      );
+
+      if (!response.ok) {
+        console.error("Ably publish failed:", response.status);
+      }
+    }
+
+    // ADMIN LOGIN
+    if (url.pathname === "/admin-login" && method === "POST") {
+      if (!ADMIN_PASSWORD) {
+        return json({
+          ok: false,
+          error: "ADMIN_PASSWORD secret is not configured."
+        }, 500);
+      }
+
+      const body = await request.json();
+      const ok = body.password === ADMIN_PASSWORD;
+
+      if (ok) {
+        await recordLoginEvent("ADMIN", "login");
+      }
+
+      return json({ ok });
+    }
+
+    // USER LOGIN
+    if (url.pathname === "/login" && method === "POST") {
+      const body = await request.json();
+      const username = String(body.username || "").trim();
+      const password = String(body.password || "");
+
+      const account = await db.prepare(
+        "SELECT password FROM accounts WHERE username = ?"
+      ).bind(username).first();
+
+      if (!account || account.password !== password) {
+        return json({ ok: false, error: "Invalid login" });
+      }
+
+      await db.prepare(
+        `INSERT INTO online (username, last_seen)
+         VALUES (?, ?)
+         ON CONFLICT(username) DO UPDATE SET last_seen = excluded.last_seen`
+      ).bind(username, Date.now()).run();
+
+      await recordLoginEvent(username, "login");
+
+      return json({
+        ok: true,
+        username,
+        activeChat: await getActiveChatName()
+      });
+    }
+
+    // LOGOUT
+    if (url.pathname === "/logout" && method === "POST") {
+      const body = await request.json();
+      const username = String(body.username || "").trim();
+
+      if (username) {
+        await recordLoginEvent(username, "logout");
+
+        await db.prepare(
+          "DELETE FROM online WHERE username = ?"
+        ).bind(username).run();
+      }
+
+      return json({ ok: true });
+    }
+
+    // ADMIN: LOGIN HISTORY
+    if (url.pathname === "/admin-login-history" && method === "GET") {
+      if (!isAdminRequest()) {
+        return json({
+          ok: false,
+          error: "Admin authorization required."
+        }, 401);
+      }
+
+      const requestedLimit = Number.parseInt(
+        url.searchParams.get("limit") || "200",
+        10
+      );
+
+      const limit = Number.isFinite(requestedLimit)
+        ? Math.min(Math.max(requestedLimit, 1), 5000)
+        : 200;
+
+      const result = await db.prepare(
+        `SELECT username, event, time
+         FROM login_history
+         ORDER BY id DESC
+         LIMIT ?`
+      ).bind(limit).all();
+
+      return json({ events: result.results || [] });
+    }
+
+    // PRIVATE REPORT SUBMISSION
+    if (url.pathname === "/report" && method === "POST") {
+      const body = await request.json();
+      const username = String(body.username || "").trim();
+      const message = String(body.message || "").trim();
+      const chat = String(body.chat || "").trim();
+
+      if (!username || !message) {
+        return json({
+          ok: false,
+          error: "Missing username or report details."
+        }, 400);
+      }
+
+      if (message.length > 1000) {
+        return json({
+          ok: false,
+          error: "Report is too long."
+        }, 400);
+      }
+
+      await db.prepare(
+        `INSERT INTO reports (username, message, chat, time)
+         VALUES (?, ?, ?, ?)`
+      ).bind(username, message, chat, new Date().toISOString()).run();
+
+      return json({ ok: true });
+    }
+
+    // ADMIN: LIST PRIVATE REPORTS
+    if (url.pathname === "/admin-reports" && method === "GET") {
+      if (!isAdminRequest()) {
+        return json({
+          ok: false,
+          error: "Admin authorization required."
+        }, 401);
+      }
+
+      const result = await db.prepare(
+        `SELECT id, username, message, chat, time
+         FROM reports
+         ORDER BY id DESC`
+      ).all();
+
+      return json({ reports: result.results || [] });
+    }
+
+    // ADMIN: DELETE PRIVATE REPORT
+    if (url.pathname === "/admin-delete-report" && method === "POST") {
+      if (!isAdminRequest()) {
+        return json({
+          ok: false,
+          error: "Admin authorization required."
+        }, 401);
+      }
+
+      const body = await request.json();
+      const id = Number.parseInt(body.id, 10);
+
+      if (!Number.isInteger(id) || id < 1) {
+        return json({
+          ok: false,
+          error: "A valid report ID is required."
+        }, 400);
+      }
+
+      await db.prepare(
+        "DELETE FROM reports WHERE id = ?"
+      ).bind(id).run();
+
+      return json({ ok: true });
+    }
+
+    // ADMIN: ADD ACCOUNT
+    if (url.pathname === "/admin-add-account" && method === "POST") {
+      if (!isAdminRequest()) {
+        return json({ ok: false, error: "Admin authorization required." }, 401);
+      }
+      const body = await request.json();
+      const username = String(body.username || "").trim();
+      const password = String(body.password || "");
+
+      if (!username || !password) {
+        return text("Missing fields", 400);
+      }
+
+      await db.prepare(
+        `INSERT INTO accounts (username, password)
+         VALUES (?, ?)
+         ON CONFLICT(username) DO UPDATE SET password = excluded.password`
+      ).bind(username, password).run();
+
+      return text("Account added");
+    }
+
+    // ADMIN: REMOVE ACCOUNT
+    if (url.pathname === "/admin-remove-account" && method === "POST") {
+      if (!isAdminRequest()) {
+        return json({
+          ok: false,
+          error: "Admin authorization required."
+        }, 401);
+      }
+
+      const body = await request.json();
+      const username = String(body.username || "").trim();
+
+      if (!username) {
+        return text("Missing username", 400);
+      }
+
+      await db.prepare(
+        "DELETE FROM accounts WHERE username = ?"
+      ).bind(username).run();
+
+      return text("Account removed");
+    }
+
+    // ADMIN: LIST ACCOUNTS
+    if (url.pathname === "/admin-accounts" && method === "GET") {
+      if (!isAdminRequest()) {
+        return json({ ok: false, error: "Admin authorization required." }, 401);
+      }
+      const result = await db.prepare(
+        "SELECT username FROM accounts"
+      ).all();
+
+      return json((result.results || []).map(row => row.username));
+    }
+
+    // ADMIN: SET ACTIVE CHAT
+    if (url.pathname === "/admin-set-chat" && method === "POST") {
+      if (!isAdminRequest()) {
+        return json({ ok: false, error: "Admin authorization required." }, 401);
+      }
+      const body = await request.json();
+      const name = String(body.name || "").trim();
+
+      if (!name) {
+        return text("Missing name", 400);
+      }
+
+      await setActiveChatName(name);
+      return text("Active chat set");
+    }
+
+    // LIST CHATS
+    if (url.pathname === "/chats" && method === "GET") {
+      const result = await db.prepare(
+        "SELECT name, status FROM chats"
+      ).all();
+
+      let chats = result.results || [];
+
+      if (chats.length === 0) {
+        const active = await getActiveChatName();
+        chats = [{ name: active, status: "active" }];
+      }
+
+      return json(chats);
+    }
+
+    // ACTIVE CHAT
+    if (url.pathname === "/active-chat" && method === "GET") {
+      return json({ name: await getActiveChatName() });
+    }
+
+    // ONLINE PING
+    if (url.pathname === "/online-ping" && method === "POST") {
+      const body = await request.json();
+      const username = String(body.username || "").trim();
+
+      if (username) {
+        await db.prepare(
+          `INSERT INTO online (username, last_seen)
+           VALUES (?, ?)
+           ON CONFLICT(username) DO UPDATE SET last_seen = excluded.last_seen`
+        ).bind(username, Date.now()).run();
+      }
+
+      return json({ ok: true });
+    }
+
+    // ONLINE USERS
+    if (url.pathname === "/online-users" && method === "GET") {
+      const cutoff = Date.now() - 60000;
+
+      const result = await db.prepare(
+        "SELECT username FROM online WHERE last_seen > ?"
+      ).bind(cutoff).all();
+
+      return json((result.results || []).map(row => row.username));
+    }
+
+    // ADMIN: MUTE USER
+    if (url.pathname === "/admin-mute" && method === "POST") {
+      if (!isAdminRequest()) {
+        return json({ ok: false, error: "Admin authorization required." }, 401);
+      }
+      const body = await request.json();
+      const username = String(body.username || "").trim();
+
+      if (!username) {
+        return json({ ok: false, error: "Missing username" });
+      }
+
+      await db.prepare(
+        `INSERT INTO moderation (username, muted, blinded)
+         VALUES (?, 1, COALESCE(
+           (SELECT blinded FROM moderation WHERE username = ?), 0
+         ))
+         ON CONFLICT(username) DO UPDATE SET muted = 1`
+      ).bind(username, username).run();
+
+      return json({ ok: true });
+    }
+
+    // ADMIN: UNMUTE USER
+    if (url.pathname === "/admin-unmute" && method === "POST") {
+      if (!isAdminRequest()) {
+        return json({ ok: false, error: "Admin authorization required." }, 401);
+      }
+      const body = await request.json();
+      const username = String(body.username || "").trim();
+
+      if (!username) {
+        return json({ ok: false, error: "Missing username" });
+      }
+
+      await db.prepare(
+        "UPDATE moderation SET muted = 0 WHERE username = ?"
+      ).bind(username).run();
+
+      return json({ ok: true });
+    }
+
+    // ADMIN: LIST MUTED USERS
+    if (url.pathname === "/muted-users" && method === "GET") {
+      if (!isAdminRequest()) {
+        return json({ ok: false, error: "Admin authorization required." }, 401);
+      }
+      const result = await db.prepare(
+        "SELECT username FROM moderation WHERE muted = 1"
+      ).all();
+
+      return json((result.results || []).map(row => row.username));
+    }
+
+    // ADMIN: BLIND USER
+    if (url.pathname === "/admin-blind" && method === "POST") {
+      if (!isAdminRequest()) {
+        return json({ ok: false, error: "Admin authorization required." }, 401);
+      }
+      const body = await request.json();
+      const username = String(body.username || "").trim();
+
+      if (!username) {
+        return json({ ok: false, error: "Missing username" });
+      }
+
+      await db.prepare(
+        `INSERT INTO moderation (username, muted, blinded)
+         VALUES (?, COALESCE(
+           (SELECT muted FROM moderation WHERE username = ?), 0
+         ), 1)
+         ON CONFLICT(username) DO UPDATE SET blinded = 1`
+      ).bind(username, username).run();
+
+      return json({ ok: true });
+    }
+
+    // ADMIN: UNBLIND USER
+    if (url.pathname === "/admin-unblind" && method === "POST") {
+      if (!isAdminRequest()) {
+        return json({ ok: false, error: "Admin authorization required." }, 401);
+      }
+      const body = await request.json();
+      const username = String(body.username || "").trim();
+
+      if (!username) {
+        return json({ ok: false, error: "Missing username" });
+      }
+
+      await db.prepare(
+        "UPDATE moderation SET blinded = 0 WHERE username = ?"
+      ).bind(username).run();
+
+      return json({ ok: true });
+    }
+
+    // ADMIN: LIST BLINDED USERS
+    if (url.pathname === "/blinded-users" && method === "GET") {
+      if (!isAdminRequest()) {
+        return json({ ok: false, error: "Admin authorization required." }, 401);
+      }
+      const result = await db.prepare(
+        "SELECT username FROM moderation WHERE blinded = 1"
+      ).all();
+
+      return json((result.results || []).map(row => row.username));
+    }
+
+    // CHECK WHETHER A USER IS BLINDED
+    if (url.pathname === "/is-blind" && method === "GET") {
+      const username = url.searchParams.get("username");
+
+      if (!username) {
+        return json({ blind: false });
+      }
+
+      const moderation = await db.prepare(
+        "SELECT blinded FROM moderation WHERE username = ?"
+      ).bind(username).first();
+
+      return json({
+        blind: Boolean(moderation && moderation.blinded)
+      });
+    }
+
+    // ADMIN: LOCK CHAT
+    if (url.pathname === "/admin-lock-chat" && method === "POST") {
+      if (!isAdminRequest()) {
+        return json({ ok: false, error: "Admin authorization required." }, 401);
+      }
+      await setSetting("chat-locked", "true");
+      return json({ ok: true });
+    }
+
+    // ADMIN: UNLOCK CHAT
+    if (url.pathname === "/admin-unlock-chat" && method === "POST") {
+      if (!isAdminRequest()) {
+        return json({ ok: false, error: "Admin authorization required." }, 401);
+      }
+      await setSetting("chat-locked", "false");
+      return json({ ok: true });
+    }
+
+    // CHAT LOCK STATUS
+    if (url.pathname === "/chat-locked" && method === "GET") {
+      const locked = await getSetting("chat-locked", "false");
+      return json({ locked: locked === "true" });
+    }
+
+    // PUBLIC: READ THE SERVER-SAVED WEEKLY QUIET-HOURS SCHEDULE
+    if (url.pathname === "/chat-schedule" && method === "GET") {
+      return json({ ok: true, schedule: await getChatSchedule() });
+    }
+
+    // ADMIN: SAVE OR CLEAR THE SERVER-SAVED DAILY QUIET-HOURS SCHEDULE
+    if (url.pathname === "/admin-chat-schedule" && method === "POST") {
+      if (!isAdminRequest()) {
+        return json({
+          ok: false,
+          error: "Admin authorization required."
+        }, 401);
+      }
+
+      let body;
+      try {
+        body = await request.json();
+      } catch (error) {
+        return json({ ok: false, error: "A valid JSON body is required." }, 400);
+      }
+
+      const enabled = body.enabled === true;
+      let schedule = emptyChatSchedule();
+
+      if (enabled) {
+        const timeZone = String(body.timeZone || "");
+        const incomingDays = body.days;
+        if (!incomingDays || typeof incomingDays !== "object" || Array.isArray(incomingDays)) {
+          return json({
+            ok: false,
+            error: "Provide a schedule for each enabled day."
+          }, 400);
+        }
+
+        const days = {};
+        for (const day of SCHEDULE_DAYS) {
+          const entry = incomingDays[day];
+          if (!entry || entry.enabled !== true) continue;
+
+          const start = String(entry.start || "");
+          const end = String(entry.end || "");
+          const startMinutes = minutesFromHHMM(start);
+          const endMinutes = minutesFromHHMM(end);
+          if (startMinutes === null || endMinutes === null || startMinutes === endMinutes) {
+            return json({
+              ok: false,
+              error: `Choose valid, different start and end times for ${day}.`
+            }, 400);
+          }
+
+          days[day] = { enabled: true, start, end };
+        }
+
+        if (!Object.keys(days).length) {
+          return json({
+            ok: false,
+            error: "Enable at least one day, or clear the schedule."
+          }, 400);
+        }
+
+        if (!timeZone || getMinutesInTimeZone(timeZone) === null) {
+          return json({
+            ok: false,
+            error: "Choose a valid time zone by saving from a supported browser."
+          }, 400);
+        }
+
+        schedule = { enabled: true, days, timeZone };
+      }
+
+      await setSetting("chat-schedule", JSON.stringify(schedule));
+      return json({ ok: true, schedule });
+    }
+
+    // SEND CHAT MESSAGE
+    if (url.pathname === "/send" && method === "POST") {
+      let body;
+      try {
+        body = await request.json();
+      } catch (error) {
+        return json({ ok: false, error: "A valid JSON body is required." }, 400);
+      }
+
+      const username = String(body.username || "").trim();
+      const message = String(body.message || "").trim();
+      const requestedChat = String(body.chat || "").trim();
+
+      if (!username || !message) {
+        return json({ ok: false, error: "Missing fields" }, 400);
+      }
+
+      // Enforced on the server for every site/client that calls this Worker.
+      const chatSchedule = await getChatSchedule();
+      if (isChatScheduleActive(chatSchedule)) {
+        return json({
+          ok: false,
+          error: "Chat is inactive during its scheduled quiet hours."
+        }, 403);
+      }
+
+      const chatName = requestedChat || await getActiveChatName();
+      const chatStatus = await getChatStatus(chatName);
+
+      if (chatStatus !== "active") {
+        return json({ ok: false, error: "Chat is not active" }, 403);
+      }
+
+      const moderation = await db.prepare(
+        "SELECT muted FROM moderation WHERE username = ?"
+      ).bind(username).first();
+
+      if (moderation && moderation.muted) {
+        return json({
+          ok: false,
+          error: "You are muted by the ADMIN"
+        }, 403);
+      }
+
+      const locked = await getSetting("chat-locked", "false");
+
+      if (locked === "true") {
+        return json({
+          ok: false,
+          error: "Chat is locked by THE ADMIN"
+        }, 403);
+      }
+
+      // AI BOT TRIGGER
+      if (/^aibot:/i.test(message)) {
+        if (!env.AI) {
+          return json({
+            ok: false,
+            error: "AI binding is not configured."
+          }, 500);
+        }
+
+        const prompt = message.replace(/^aibot:/i, "").trim();
+
+        if (!prompt) {
+          return json({
+            ok: false,
+            error: "Enter a prompt for the AI bot."
+          }, 400);
+        }
+
+        const aiResult = await env.AI.run(
+          "@cf/meta/llama-3-8b-instruct",
+          {
+            messages: [
+              {
+                role: "system",
+                content: "You are a friendly, safe assistant for teens. Keep responses positive and helpful."
+              },
+              {
+                role: "user",
+                content: prompt
+              }
+            ]
+          }
+        );
+
+        const reply = aiResult.response || "I couldn't create a reply.";
+        const time = new Date().toISOString();
+
+        await db.prepare(
+          "INSERT INTO messages (chat, username, message, time) VALUES (?, ?, ?, ?)"
+        ).bind(chatName, "AI Bot", reply, time).run();
+
+        await publishAbly(`ckc-chat-${chatName}`, "message", {
+          chat: chatName,
+          username: "AI Bot",
+          message: reply,
+          time
+        });
+
+        return json({ ok: true, ai: true, reply });
+      }
+
+      const blockedWords = [];
+
+      for (const blockedWord of blockedWords) {
+        if (message.toLowerCase().includes(blockedWord.toLowerCase())) {
+          return json({
+            ok: false,
+            error: "Message contains blocked words"
+          }, 400);
+        }
+      }
+
+      // Ignore exact repeat messages from the same sender and room within one second.
+      // This also protects users whose client does not implement local deduplication.
+      const duplicateSince = new Date(Date.now() - 1000).toISOString();
+      const recentDuplicate = await db.prepare(
+        `SELECT time FROM messages
+         WHERE chat = ? AND username = ? AND message = ? AND time >= ?
+         ORDER BY time DESC LIMIT 1`
+      ).bind(chatName, username, message, duplicateSince).first();
+
+      if (recentDuplicate) {
+        return json({ ok: true, duplicate: true });
+      }
+
+      const time = new Date().toISOString();
+
+      await db.prepare(
+        "INSERT INTO messages (chat, username, message, time) VALUES (?, ?, ?, ?)"
+      ).bind(chatName, username, message, time).run();
+
+      await publishAbly(`ckc-chat-${chatName}`, "message", {
+        chat: chatName,
+        username,
+        message,
+        time
+      });
+
+      return json({ ok: true });
+    }
+
+    // CHAT HISTORY
+    if (url.pathname === "/history" && method === "GET") {
+      const chatName = url.searchParams.get("chat") || await getActiveChatName();
+      const username = url.searchParams.get("username");
+
+      if (username) {
+        const moderation = await db.prepare(
+          "SELECT blinded FROM moderation WHERE username = ?"
+        ).bind(username).first();
+
+        if (moderation && moderation.blinded) {
+          return json([]);
+        }
+      }
+
+      const result = await db.prepare(
+        `SELECT chat, username, message, time
+         FROM messages
+         WHERE chat = ?
+         ORDER BY time ASC`
+      ).bind(chatName).all();
+
+      return json(result.results || []);
+    }
+
+    // LIST SAVED NOTIFICATIONS
+    if (url.pathname === "/notifications" && method === "GET") {
+      const result = await db.prepare(
+        `SELECT id, title, message, created_at AS createdAt, author
+         FROM notifications
+         ORDER BY created_at DESC`
+      ).all();
+
+      return json({ notifications: result.results || [] });
+    }
+
+    // ADMIN: SAVE AND PUBLISH A NOTIFICATION
+    if (url.pathname === "/admin-notifications" && method === "POST") {
+      if (!isAdminRequest()) {
+        return json({
+          ok: false,
+          error: "Admin authorization required."
+        }, 401);
+      }
+
+      const body = await request.json();
+      const title = String(body.title || "").trim();
+      const message = String(body.message || "").trim();
+
+      if (!title || !message) {
+        return json({
+          ok: false,
+          error: "A title and message are required."
+        }, 400);
+      }
+
+      if (title.length > 100 || message.length > 1000) {
+        return json({
+          ok: false,
+          error: "The title or message is too long."
+        }, 400);
+      }
+
+      const notification = {
+        id: crypto.randomUUID(),
+        title,
+        message,
+        createdAt: new Date().toISOString(),
+        author: "ADMIN"
+      };
+
+      await db.prepare(
+        `INSERT INTO notifications (id, title, message, created_at, author)
+         VALUES (?, ?, ?, ?, ?)`
+      ).bind(
+        notification.id,
+        notification.title,
+        notification.message,
+        notification.createdAt,
+        notification.author
+      ).run();
+
+      await publishAbly("ckc-chat-notifications", "notice", notification);
+      return json({ ok: true, notification });
+    }
+
+    // ADMIN: DELETE A NOTIFICATION FOR EVERYONE
+    if (url.pathname === "/admin-delete-notification" && method === "POST") {
+      if (!isAdminRequest()) {
+        return json({
+          ok: false,
+          error: "Admin authorization required."
+        }, 401);
+      }
+
+      const body = await request.json();
+      const id = String(body.id || "").trim();
+
+      if (!id) {
+        return json({
+          ok: false,
+          error: "A notification ID is required."
+        }, 400);
+      }
+
+      await db.prepare(
+        "DELETE FROM notifications WHERE id = ?"
+      ).bind(id).run();
+
+      await publishAbly("ckc-chat-notifications", "notice-delete", { id });
+      return json({ ok: true });
+    }
+
+    // BACKEND STATUS
+    if (url.pathname === "/" && method === "GET") {
+      return text("Chat backend is running.");
+    }
+
+    return text("Not found", 404);
+  }
+};

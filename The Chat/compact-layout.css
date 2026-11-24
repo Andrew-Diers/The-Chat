@@ -1,0 +1,884 @@
+/* Keep the chat workspace compact while leaving the message history scrollable. */
+body {
+  min-height: 100dvh;
+  height: 100dvh;
+  gap: 12px;
+  padding: 12px;
+  overflow: hidden;
+  color: var(--color-text);
+  background: var(--color-bg);
+  font-family: var(--font-body);
+}
+
+#admin-side {
+  flex: 0 0 250px;
+  width: 250px;
+  height: calc(100dvh - 24px);
+  min-height: 0;
+  padding: 14px;
+  overflow: auto;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+#main-content {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  height: calc(100dvh - 24px);
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#admin-sidebar-toggle {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.chat-topbar {
+  flex: 0 0 auto;
+  align-items: center;
+  margin: 0;
+}
+
+.chat-topbar h1 {
+  margin: 0;
+  padding: 7px 14px;
+  color: var(--color-text);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 0 var(--color-primary), 0 7px 14px var(--color-shadow);
+  font-family: var(--font-heading);
+  font-size: clamp(1.35rem, 2.5vw, 1.8rem);
+  font-weight: 900;
+  letter-spacing: -0.035em;
+  text-shadow: 1px 1px 0 var(--color-border), 2px 2px 0 var(--color-border);
+}
+
+#chat-ui[style*="display: block"] {
+  display: flex !important;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 14px;
+  overflow: hidden;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+#chat-ui h2 {
+  flex: 0 0 auto;
+  margin: 0;
+  color: var(--color-text);
+  font-family: var(--font-heading);
+  font-size: 1rem;
+}
+
+#go-to-bookmark,
+#load-missing-messages,
+#chat-picker-open {
+  width: auto;
+  min-height: 36px;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 7px 11px;
+  color: var(--color-primary-contrast);
+  background: var(--color-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-family: var(--font-body);
+  font-size: 0.88rem;
+}
+
+#load-missing-messages.icon-action-button {
+  display: inline-grid;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  min-height: 34px;
+  place-items: center;
+  padding: 7px;
+}
+
+#load-missing-messages svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+#load-missing-messages:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+#load-missing-messages:disabled svg {
+  animation: missing-messages-refresh 0.9s linear infinite;
+}
+
+@keyframes missing-messages-refresh {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #load-missing-messages:disabled svg {
+    animation: none;
+  }
+}
+
+#chat-layout {
+  min-height: 0;
+  flex: 1 1 0;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding-bottom: 4px;
+}
+
+#chat-box,
+#online-box {
+  height: auto;
+  min-height: 0;
+  overflow: auto;
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+#chat-box {
+  flex: 3 1 0;
+  min-height: 180px;
+  padding: 10px;
+}
+
+#online-box {
+  flex: 0 1 150px;
+  max-width: 180px;
+  padding: 10px;
+}
+
+#online-box h3 {
+  margin: 2px 0 10px;
+  color: var(--color-primary);
+  font-family: var(--font-heading);
+  font-size: 0.9rem;
+}
+
+.msg {
+  margin-bottom: 7px;
+  padding: 7px;
+  border-bottom: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.msg-header {
+  color: var(--color-muted);
+  font-family: var(--font-body);
+}
+
+.msg-text {
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.chat-compose-tools {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
+  width: 100%;
+  min-height: 42px;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  margin: 0;
+  padding: 4px 2px;
+  overflow-x: auto;
+  overflow-y: visible;
+  background: var(--color-surface);
+  border-radius: var(--radius);
+  scrollbar-width: thin;
+}
+
+.chat-compose-tools .superscript-button {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 36px;
+  min-height: 34px;
+  margin: 0;
+  padding: 6px 9px;
+  color: var(--color-text);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-family: var(--font-body);
+}
+
+#emoji-picker-toggle {
+  min-width: 68px;
+}
+
+#chat-input {
+  flex: 0 0 auto;
+  width: 100%;
+  min-height: 42px;
+  max-height: 110px;
+  margin: 0;
+  padding: 9px 11px;
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-family: var(--font-body);
+}
+
+#chat-ui>button[onclick="sendMessage()"] {
+  width: auto;
+  min-height: 38px;
+  align-self: flex-end;
+  margin: 0;
+  padding: 8px 16px;
+  color: var(--color-primary-contrast);
+  background: var(--color-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-family: var(--font-body);
+}
+
+#chat-status-msg {
+  flex: 0 0 auto;
+  margin: 0 !important;
+  color: var(--color-danger) !important;
+  font-family: var(--font-body);
+}
+
+#login-box {
+  width: min(100%, 600px);
+  flex: 0 0 auto;
+  align-self: center;
+  margin: 8px 0;
+  padding: 12px 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+#login-box h2 {
+  margin: 0 0 8px;
+}
+
+#login-box input {
+  margin: 5px 0;
+}
+
+#login-box > button {
+  margin: 6px auto 0;
+}
+
+@media (max-width: 760px) {
+  body {
+    padding: 8px;
+    gap: 8px;
+  }
+
+  #main-content {
+    height: calc(100dvh - 16px);
+  }
+
+  #admin-side {
+    flex-basis: auto;
+    width: 100%;
+    height: auto;
+    max-height: 35dvh;
+  }
+
+  body:has(#admin-side:not([hidden])) #main-content {
+    height: 62dvh;
+    flex: 1 1 auto;
+  }
+
+  #chat-ui[style*="display: block"] {
+    padding: 10px;
+  }
+
+  #online-box {
+    flex-basis: 120px;
+  }
+}
+
+@media (max-width: 520px) {
+  #chat-layout {
+    flex-direction: column;
+  }
+
+  #chat-box {
+    flex: 1 1 auto;
+  }
+
+  #online-box {
+    flex: 0 0 92px;
+  }
+
+  #main-content {
+    gap: 6px;
+  }
+
+  #admin-sidebar-toggle {
+    width: 42px;
+    min-width: 42px;
+    height: 42px;
+    min-height: 42px;
+    padding: 0;
+  }
+}
+
+/* Give primary chat actions and sign-in controls clear, intentional widths. */
+#chat-ui > button[onclick="sendMessage()"] {
+  width: 100%;
+  min-height: 42px;
+  align-self: stretch;
+}
+
+#go-to-bookmark {
+  width: fit-content;
+  align-self: flex-start;
+}
+
+#login-box > button,
+#admin-login-open,
+#admin-login-content > button {
+  width: fit-content;
+  min-width: 0;
+  padding: 8px 14px;
+}
+
+#login-box > button {
+  display: block;
+  margin-right: auto;
+  margin-left: auto;
+}
+
+#admin-login-open {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 10;
+  display: inline-flex;
+  width: max-content;
+  align-self: auto;
+}
+
+#login-box input,
+#admin-login-content input,
+#chat-input,
+#admin-side input,
+#admin-side textarea {
+  color: var(--color-text);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-family: var(--font-body);
+}
+
+#login-box input::placeholder,
+#admin-login-content input::placeholder,
+#chat-input::placeholder,
+#admin-side input::placeholder {
+  color: var(--color-muted);
+}
+
+#login-box input:focus,
+#admin-login-content input:focus,
+#chat-input:focus,
+#admin-side input:focus {
+  border-color: var(--color-primary);
+  outline: 3px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+#unread-count {
+  box-shadow: none;
+  text-shadow: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+/* On short screens, let the page scroll rather than squeezing chat controls
+   over the history area. This also handles browser chrome changing viewport height. */
+@media (max-height: 680px) {
+  body {
+    height: auto;
+    min-height: 100dvh;
+    overflow-x: hidden;
+    overflow-y: auto;
+    align-items: flex-start;
+  }
+
+  #main-content {
+    height: auto;
+    min-height: calc(100dvh - 24px);
+  }
+
+  #chat-ui[style*="display: block"] {
+    min-height: 480px;
+  }
+
+  #chat-layout {
+    min-height: 180px;
+    flex: 1 0 180px;
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+  }
+
+  #chat-box,
+  #online-box {
+    min-height: 0;
+  }
+}
+
+@media (max-width: 760px) and (max-height: 680px) {
+  body:has(#admin-side:not([hidden])) #main-content {
+    height: auto;
+    min-height: 62dvh;
+  }
+}
+
+@media (max-width: 760px) {
+  body {
+    display: flex;
+    height: auto;
+    min-height: 100dvh;
+    align-items: stretch;
+    flex-direction: column;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  #admin-side {
+    box-sizing: border-box;
+    width: 100%;
+    max-height: 30dvh;
+    flex: 0 0 auto;
+  }
+
+  #main-content {
+    box-sizing: border-box;
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    flex: 1 0 auto;
+  }
+
+  #chat-ui[style*="display: block"] {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  #chat-layout {
+    min-height: 320px;
+    flex: 1 0 auto;
+    margin-bottom: 10px;
+  }
+
+  #chat-box {
+    min-height: 260px;
+  }
+
+  .chat-compose-tools {
+    box-sizing: border-box;
+    min-width: 0;
+    flex-wrap: wrap;
+    overflow: visible;
+  }
+}
+
+@media (max-width: 620px) {
+  #chat-ui[style*="display: block"] {
+    display: flex !important;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  #chat-layout {
+    display: flex;
+    min-height: 0;
+    flex: 0 0 auto;
+    flex-direction: column;
+    gap: 10px;
+    margin: 0;
+    padding: 0;
+  }
+
+  #chat-box {
+    box-sizing: border-box;
+    width: 100%;
+    height: clamp(220px, 42vh, 420px);
+    min-height: 220px;
+    flex: 0 0 auto;
+    overflow: auto;
+    padding-bottom: 18px;
+  }
+
+  #online-box {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 88px;
+    flex: 0 0 auto;
+  }
+
+  .chat-compose-tools {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 42px;
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    gap: 5px;
+    margin: 0;
+    padding: 6px 2px;
+    overflow: visible;
+    background: var(--color-surface);
+  }
+
+  .emoji-picker-wrap {
+    position: relative;
+    z-index: 3;
+  }
+
+  .emoji-picker {
+    position: fixed;
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    z-index: 1900;
+    width: auto;
+    max-height: min(60vh, 420px);
+    overflow-y: auto;
+  }
+
+  #chat-input,
+  #chat-ui > button[onclick="sendMessage()"] {
+    position: relative;
+    z-index: 1;
+  }
+
+  .chat-compose-tools .superscript-button {
+    min-width: 34px;
+    padding: 6px 8px;
+  }
+}
+
+@media (max-height: 680px) and (min-width: 761px) {
+  body {
+    height: auto;
+    min-height: 100dvh;
+    overflow-y: auto;
+  }
+
+  #main-content {
+    height: auto;
+    min-height: calc(100dvh - 24px);
+  }
+}
+
+/* At compact widths, give the history and composer separate, predictable rows. */
+@media (max-width: 760px) {
+  #chat-ui[style*="display: block"] {
+    display: flex !important;
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  #chat-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(120px, 0.34fr);
+    align-items: stretch;
+    width: 100%;
+    height: clamp(240px, 42vh, 340px);
+    min-height: 240px;
+    flex: 0 0 auto;
+    gap: 10px;
+    margin: 0 0 8px;
+    padding: 0 0 8px;
+  }
+
+  #chat-box,
+  #online-box {
+    box-sizing: border-box;
+    width: auto;
+    height: 100%;
+    min-height: 0;
+    overflow: auto;
+  }
+
+  .chat-compose-tools {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    width: 100%;
+    min-height: 42px;
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    align-content: center;
+    overflow: visible;
+    margin: 0;
+    padding: 6px 2px;
+    background: var(--color-surface);
+  }
+
+  #chat-input,
+  #chat-ui > button[onclick="sendMessage()"] {
+    flex: 0 0 auto;
+  }
+}
+
+@media (max-width: 620px) {
+  #chat-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(220px, 1fr) auto;
+    height: auto;
+    min-height: 0;
+  }
+
+  #chat-box {
+    height: clamp(220px, 42vh, 420px);
+  }
+
+  #online-box {
+    height: auto;
+    min-height: 88px;
+  }
+}
+
+/* Keep the composer in its own rows below the message history on small screens. */
+@media (max-width: 760px) {
+  #chat-ui[style*="display: block"] {
+    display: flex !important;
+    height: auto !important;
+    min-height: 0 !important;
+    flex: 0 0 auto !important;
+    flex-direction: column;
+    overflow: visible !important;
+  }
+
+  #chat-layout {
+    position: static;
+    z-index: auto;
+    flex: 0 0 auto !important;
+    margin-bottom: 14px !important;
+  }
+
+  #chat-box {
+    flex: 0 0 auto !important;
+  }
+
+  .chat-compose-tools,
+  #chat-input,
+  #chat-ui > button[onclick="sendMessage()"] {
+    position: static !important;
+    z-index: auto !important;
+    flex: 0 0 auto !important;
+    width: 100%;
+    align-self: stretch;
+  }
+
+  .chat-compose-tools {
+    margin-top: 0;
+    margin-bottom: 6px;
+  }
+
+  #chat-input {
+    height: auto;
+    min-height: 42px;
+    max-height: 110px;
+  }
+}
+
+@media (max-width: 620px) {
+  #chat-box {
+    height: clamp(220px, 42vh, 420px) !important;
+  }
+}
+
+@media (max-height: 680px) and (max-width: 760px) {
+  #chat-ui[style*="display: block"] {
+    min-height: 0 !important;
+  }
+
+  #chat-layout {
+    min-height: 0 !important;
+  }
+
+  #chat-box {
+    height: clamp(120px, 30dvh, 260px) !important;
+    min-height: 120px !important;
+  }
+}
+
+/* Scale the message history down with smaller viewports to keep the composer clear. */
+@media (max-width: 760px) {
+  #chat-layout {
+    height: auto !important;
+    min-height: 0 !important;
+    grid-template-rows: auto auto;
+  }
+
+  #chat-box {
+    height: clamp(150px, 34dvh, 360px) !important;
+    min-height: 0 !important;
+    flex: 0 1 auto !important;
+  }
+}
+
+@media (max-width: 760px) and (max-height: 680px) {
+  #chat-box {
+    height: clamp(110px, 27dvh, 220px) !important;
+  }
+}
+
+/* Let the message history give up height as the viewport gets shorter. */
+@media (max-height: 760px) {
+  #chat-ui[style*="display: block"] {
+    min-height: 0 !important;
+  }
+
+  #chat-layout {
+    min-height: 0 !important;
+    flex: 1 1 0 !important;
+  }
+
+  #chat-box {
+    min-height: 0 !important;
+    flex: 1 1 0 !important;
+  }
+}
+
+@media (max-width: 760px) {
+  #chat-layout {
+    min-height: 0 !important;
+    flex: 0 0 auto !important;
+  }
+
+  #chat-box {
+    height: clamp(80px, 32dvh, 360px) !important;
+    min-height: 0 !important;
+    flex: 0 1 auto !important;
+  }
+}
+
+@media (max-width: 760px) and (max-height: 520px) {
+  #chat-box {
+    height: clamp(60px, 24dvh, 150px) !important;
+  }
+}
+
+/* Keep the online-users panel responsive when it stacks beneath chat history. */
+@media (max-width: 620px) {
+  #online-box {
+    height: clamp(48px, 10dvh, 96px) !important;
+    min-height: 48px !important;
+    overflow-y: auto;
+  }
+}
+
+@media (max-width: 620px) and (max-height: 520px) {
+  #online-box {
+    height: clamp(40px, 9dvh, 64px) !important;
+    min-height: 40px !important;
+  }
+}
+
+@media (max-width: 620px) {
+  #online-box {
+    width: min(100%, 180px) !important;
+    max-width: 180px;
+    justify-self: end;
+  }
+}
+
+/* Render formatted smaller and raised text at a consistent size in chat history. */
+#chat-box .msg-text sub,
+#chat-box .msg-text sup {
+  font-size: 0.75em;
+  line-height: 0;
+}
+
+#chat-box .msg-text sub {
+  vertical-align: sub;
+}
+
+#chat-box .msg-text sup {
+  vertical-align: super;
+}
+
+/* Let message history use the remaining panel height, keeping the composer low. */
+#chat-ui[style*="display: block"] {
+  gap: 3px;
+}
+
+#chat-layout {
+  height: auto !important;
+  min-height: 0 !important;
+  flex: 1 1 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+#chat-box {
+  height: auto !important;
+  min-height: 0 !important;
+  flex: 3 1 0 !important;
+}
+
+#online-box {
+  height: auto !important;
+  min-height: 0 !important;
+}
+
+.chat-compose-tools {
+  flex: 0 0 auto !important;
+  padding-top: 0;
+}
+
+#chat-input,
+#chat-ui > button[onclick="sendMessage()"],
+#chat-status-msg {
+  flex: 0 0 auto !important;
+}
+
+@media (max-width: 620px) {
+  #chat-layout {
+    grid-template-rows: minmax(120px, 1fr) auto;
+  }
+
+  #chat-box {
+    height: auto !important;
+  }
+
+  #online-box {
+    height: auto !important;
+    min-height: 48px !important;
+  }
+}

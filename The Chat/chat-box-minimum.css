@@ -1,0 +1,10 @@
+/* Keep chat history readable on compact screens. */
+#chat-box {
+  min-height: 180px !important;
+}
+
+@media (max-width: 760px) {
+  #chat-layout {
+    min-height: 180px !important;
+  }
+}
